@@ -19,8 +19,8 @@ using System.Threading.Tasks;
 
 namespace Network.Server
 {
-    public delegate void OnSendPacketHandler(int sendBytes);
-    public delegate void OnReceivePacketHandler(int sendBytes);
+    public delegate void OnSendCompleteHandler(byte[] sendBytes);
+    public delegate void OnReceiveCompleteHandler(byte[] receiveBytes);
 
     public enum NetworkConnectionType
     {
@@ -30,14 +30,25 @@ namespace Network.Server
 
     public class NetworkClient : OveridableThread
     {
-        private string _UserSerial;                           //클라 ID - 절대 중복되면 안됨
-        private long _ConnectedTime;                
-        private TcpClient _TcpClient;               
-        private volatile bool _IsConnectionAlive;             //서버와 연결상태 여부
-        private ReaderWriterLockSlim _GeneralLocker;
+        protected string _UserSerial;                           //클라 ID - 절대 중복되면 안됨
+        protected long _ConnectedTime;
+        protected TcpClient _TcpClient;
+        protected volatile bool _IsConnectionAlive;             //서버와 연결상태 여부
+        protected ReaderWriterLockSlim _GeneralLocker;
+        protected bool _NoDelay;
+        protected IPEndPoint _Endpoint;                         //접속자의 아이피
+
         private NetworkConnectionType _NetworkConnectionType; //연결타입 - 로컬접속인지 외부접속인지
-        private IPEndPoint _Endpoint;                         //접속자의 아이피
         private NetworkIOCPServer _IOCPServer;
+
+        public NetworkClient()
+        {
+            _UserSerial = "";
+            _IsConnectionAlive = false;
+            _GeneralLocker = new ReaderWriterLockSlim();
+            _ConnectedTime = 0;
+            _NoDelay = true;
+        }
 
         public NetworkClient(long connectedTime, TcpClient  tcpClient, NetworkIOCPServer iocpServer)
         {
@@ -45,6 +56,7 @@ namespace Network.Server
             _UserSerial = "";
             _ConnectedTime = connectedTime;
             _GeneralLocker = new ReaderWriterLockSlim();
+            _NoDelay = true;
             _IsConnectionAlive = true;
             _Endpoint = _TcpClient.Client.RemoteEndPoint as IPEndPoint;
             _NetworkConnectionType = _Endpoint != null ? NetworkConnectionType.Remote : NetworkConnectionType.Local;
@@ -97,6 +109,26 @@ namespace Network.Server
                 }
             }
         }
+
+        public bool NoDelay
+        {
+            get
+            {
+                using (_GeneralLocker.Read())
+                {
+                    return _NoDelay;
+                }
+            }
+            set
+            {
+                using (_GeneralLocker.Write())
+                {
+                    _NoDelay = value;
+                    if (_TcpClient.Connected)
+                        _TcpClient.NoDelay = true;
+                }
+            }
+        }
         #endregion
 
         public void Start()
@@ -110,10 +142,8 @@ namespace Network.Server
             StartThread();
         }
 
-        public void Disconnect()
+        public virtual void Disconnect()
         {
-            NetworkLogger.WriteLine(NetworkLogLevel.Info, _Endpoint + " 클라이언트의 접속이 끊어졌습니다");
-
             try
             {
                 using (_GeneralLocker.Write())
@@ -274,7 +304,7 @@ namespace Network.Server
         {
         }
 
-        protected override void Execute()
+        protected override void Execute(object param)
         {
             try
             {
@@ -408,8 +438,6 @@ namespace Network.Server
         {
             try
             {
-                Console.WriteLine(traffic.ContentPacket.TransferingData[0] + " Echo Send");
-                Send(traffic.ContentPacket.TransferingData, 0, 1);
                 using (_GeneralLocker.Write())
                 {
                     NetworkTraffic receiveTraffic = NetworkTraffic.CreateReceiveTraffic(NetworkPacketHeader.HeaderSize, this);

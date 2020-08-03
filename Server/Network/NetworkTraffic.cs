@@ -15,7 +15,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Network.Server
+namespace Network
 {
     public enum NetworkTrafficStep : int
     {

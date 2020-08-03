@@ -26,7 +26,6 @@ namespace Network.Server
     public class NetworkIOCPServer : OveridableThread, INetworkBase
     {
         // 제너럴 변수들
-        private INetworkLogger _Logger;
         private TcpListener _Listener;
         private volatile bool _IsRunning;
         private readonly ushort _ListeningPort;
@@ -40,8 +39,8 @@ namespace Network.Server
         public event OnServerStoppedHandler OnServerStopped;
         public event OnClientConnectedHandler OnClientConnected;
         public event OnClientDisconnectedHandler OnClientDisconnected;
-        public event OnSendPacketHandler OnSendPacket;
-        public event OnReceivePacketHandler OnReceivePacket;
+        public event OnSendCompleteHandler OnSendPacket;
+        public event OnReceiveCompleteHandler OnReceivePacket;
 
         public NetworkIOCPServer(ushort listeningPort = 0)
         {
@@ -53,9 +52,8 @@ namespace Network.Server
 
             _IsRunning = false;
             _Listener = null;
-            _Logger = null;
-            _GeneralLocker = new ReaderWriterLockSlim(LockRecursionPolicy.SupportsRecursion);
-            _WaitingClientLocker = new ReaderWriterLockSlim(LockRecursionPolicy.SupportsRecursion);
+            _GeneralLocker = new ReaderWriterLockSlim();
+            _WaitingClientLocker = new ReaderWriterLockSlim();
             _WaitingClientList = new List<NetworkClient>();
         }
 
@@ -101,6 +99,12 @@ namespace Network.Server
             {
                 _Listener.Stop();
                 _Listener = null;
+                _IsRunning = false;
+
+                using (_WaitingClientLocker.Write())
+                {
+                    _WaitingClientList.Clear();
+                }
             }
             finally
             {
@@ -108,7 +112,7 @@ namespace Network.Server
             }
         }
 
-        protected override void Execute()
+        protected override void Execute(object param)
         {
             _GeneralLocker.EnterWriteLock();
             try
@@ -162,7 +166,7 @@ namespace Network.Server
             }
             finally
             {
-                _GeneralLocker.EnterWriteLock();
+                _GeneralLocker.ExitWriteLock();
             }
 
             //대기 큐에 넣어줌
@@ -190,7 +194,7 @@ namespace Network.Server
             }
             finally
             {
-                _GeneralLocker.EnterWriteLock();
+                _GeneralLocker.ExitWriteLock();
             }
 
             //접속한 클라를 수신가능한 상태로 둠

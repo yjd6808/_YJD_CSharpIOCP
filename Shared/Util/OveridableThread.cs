@@ -55,11 +55,25 @@ namespace Shared.Util
                 return;
             }
 
-            RunningThread = new Thread(OveridableThread.EntryPoint);
+            RunningThread = new Thread(EntryPoint);
             RunningThread.Start(this);
         }
 
-        protected virtual void Execute()
+        public virtual void StartThreadWithParam(object param)
+        {
+            //이미 시작된 경우는 경고메시지를 뛰워주자
+            if (RunningThread != null &&
+               (RunningThread.ThreadState & ThreadState.Unstarted) != ThreadState.Unstarted)
+            {
+                System.Diagnostics.Debug.Assert(false, "이미 시작되었던 쓰레드입니다.");
+                return;
+            }
+
+            RunningThread = new Thread(EntryPoint);
+            RunningThread.Start(param);
+        }
+
+        protected virtual void Execute(object param)
         {
             if (_ThreadAction != null)
                 _ThreadAction();
@@ -72,9 +86,9 @@ namespace Shared.Util
         /// 쓰레드 시작지점
         /// </summary>
         /// <param name="param">자기자신</param>
-        private static void EntryPoint(object param)
+        private void EntryPoint(object param)
         {
-            ((OveridableThread)param).Execute();
+            Execute(param);
         }
     }
 }

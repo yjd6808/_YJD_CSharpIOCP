@@ -49,6 +49,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Network\Client\NetworkIOCPClient.cs" />
     <Compile Include="Network\INetworkBase.cs" />
     <Compile Include="Network\NetworkTraffic.cs" />
     <Compile Include="Network\Logger\INetworkLogger.cs" />
