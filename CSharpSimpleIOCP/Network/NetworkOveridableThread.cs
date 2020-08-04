@@ -8,9 +8,9 @@
 using System;
 using System.Threading;
 
-namespace Shared.Util
+namespace CSharpSimpleIOCP.Network
 {
-    public class OveridableThread
+    public class NetworkOveridableThread
     {
         protected Thread RunningThread { get; private set; }
 
@@ -18,7 +18,7 @@ namespace Shared.Util
         private Action<object> _ThreadParameterizedAction;
         private object _ThreadParameter;
 
-        public OveridableThread()
+        public NetworkOveridableThread()
         {
             RunningThread = null;
 
@@ -27,7 +27,7 @@ namespace Shared.Util
             _ThreadParameterizedAction = null;
         }
 
-        public OveridableThread(Action action)
+        public NetworkOveridableThread(Action action)
         {
             RunningThread = null;
 
@@ -36,7 +36,7 @@ namespace Shared.Util
             _ThreadParameterizedAction = null;
         }
 
-        public OveridableThread(Action<object> parameterizedAction, object param)
+        public NetworkOveridableThread(Action<object> parameterizedAction, object param)
         {
             RunningThread = null;
 
@@ -45,10 +45,10 @@ namespace Shared.Util
             _ThreadParameterizedAction = parameterizedAction;
         }
 
-        public virtual void StartThread()
+        protected virtual void StartThread()
         {
             //이미 시작된 경우는 경고메시지를 뛰워주자
-            if (RunningThread != null && 
+            if (RunningThread != null &&
                (RunningThread.ThreadState & ThreadState.Unstarted) != ThreadState.Unstarted)
             {
                 System.Diagnostics.Debug.Assert(false, "이미 시작되었던 쓰레드입니다.");
@@ -59,7 +59,7 @@ namespace Shared.Util
             RunningThread.Start(this);
         }
 
-        public virtual void StartThreadWithParam(object param)
+        protected virtual void StartThreadWithParam(object param)
         {
             //이미 시작된 경우는 경고메시지를 뛰워주자
             if (RunningThread != null &&

@@ -5,9 +5,8 @@
 // ===============================
 
 
-using Network.Server;
-using Network.Logger;
-using Shared.Util;
+using CSharpSimpleIOCP.Network.Server;
+using CSharpSimpleIOCP.Network.Logger;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -16,19 +15,19 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using CSharpSimpleIOCP.Network.Client;
+using CSharpSimpleIOCP.Util;
 
-namespace Network.Server
+namespace CSharpSimpleIOCP.Network.Server
 {
-    public delegate void OnSendCompleteHandler(byte[] sendBytes);
-    public delegate void OnReceiveCompleteHandler(byte[] receiveBytes);
-
     public enum NetworkConnectionType
     {
+        NotConnected,
         Local,
         Remote
     }
 
-    public class NetworkClient : OveridableThread
+    public class NetworkClient : NetworkOveridableThread
     {
         protected string _UserSerial;                           //클라 ID - 절대 중복되면 안됨
         protected long _ConnectedTime;
@@ -37,9 +36,19 @@ namespace Network.Server
         protected ReaderWriterLockSlim _GeneralLocker;
         protected bool _NoDelay;
         protected IPEndPoint _Endpoint;                         //접속자의 아이피
+        protected INetworkClientEventListener _EventListener;   //이벤트리스너
+        protected NetworkConnectionType _NetworkConnectionType; //연결타입 - 로컬접속인지 외부접속인지
 
-        private NetworkConnectionType _NetworkConnectionType; //연결타입 - 로컬접속인지 외부접속인지
         private NetworkIOCPServer _IOCPServer;
+        private object _SendLocker;
+
+        #region 델리게이트와 이벤트들
+        public delegate void OnReceiveCompleteHandler(byte[] bytes);
+        public delegate void OnSendCompleteHandler(byte[] bytes);
+
+        public event OnReceiveCompleteHandler _OnReceiveComeplete;
+        public event OnSendCompleteHandler _OnSendComeplete;
+        #endregion
 
         public NetworkClient()
         {
@@ -47,26 +56,54 @@ namespace Network.Server
             _IsConnectionAlive = false;
             _GeneralLocker = new ReaderWriterLockSlim();
             _ConnectedTime = 0;
+            _NetworkConnectionType = NetworkConnectionType.NotConnected;
             _NoDelay = true;
+            _SendLocker = new object();
         }
 
-        public NetworkClient(long connectedTime, TcpClient  tcpClient, NetworkIOCPServer iocpServer)
+        public NetworkClient(long connectedTime, TcpClient tcpClient, NetworkIOCPServer iocpServer)
         {
             _TcpClient = tcpClient;
             _UserSerial = "";
             _ConnectedTime = connectedTime;
             _GeneralLocker = new ReaderWriterLockSlim();
             _NoDelay = true;
+            _TcpClient.NoDelay = _NoDelay;
             _IsConnectionAlive = true;
             _Endpoint = _TcpClient.Client.RemoteEndPoint as IPEndPoint;
             _NetworkConnectionType = _Endpoint != null ? NetworkConnectionType.Remote : NetworkConnectionType.Local;
             _Endpoint = _TcpClient.Client.LocalEndPoint as IPEndPoint;
             _IOCPServer = iocpServer;
+            _SendLocker = new object();
         }
 
         #region Getter
+
+        public IPEndPoint Endpoint
+        {
+            get
+            {
+                using (_GeneralLocker.Read())
+                {
+                    return _Endpoint;
+                }
+            }
+        }
+
+        public NetworkConnectionType ConnectionType
+        {
+            get
+            {
+                using (_GeneralLocker.Read())
+                {
+                    return _NetworkConnectionType;
+                }
+            }
+        }
+
+
         public string Serial
-        { 
+        {
             get
             {
                 using (_GeneralLocker.Read())
@@ -79,7 +116,7 @@ namespace Network.Server
 
         public Socket ClientSocket
         {
-            get 
+            get
             {
                 using (_GeneralLocker.Read())
                 {
@@ -124,8 +161,47 @@ namespace Network.Server
                 using (_GeneralLocker.Write())
                 {
                     _NoDelay = value;
-                    if (_TcpClient.Connected)
+                    if (_TcpClient != null && _TcpClient.Connected)
                         _TcpClient.NoDelay = true;
+                }
+            }
+        }
+
+
+        public event OnReceiveCompleteHandler OnReceiveComeplete
+        {
+            add
+            {
+                using (_GeneralLocker.Write())
+                {
+                    _OnReceiveComeplete += value;
+                }
+            }
+
+            remove
+            {
+                using (_GeneralLocker.Write())
+                {
+                    _OnReceiveComeplete -= value;
+                }
+            }
+        }
+
+        public event OnSendCompleteHandler OnSendComeplete
+        {
+            add
+            {
+                using (_GeneralLocker.Write())
+                {
+                    _OnSendComeplete += value;
+                }
+            }
+
+            remove
+            {
+                using (_GeneralLocker.Write())
+                {
+                    _OnSendComeplete -= value;
                 }
             }
         }
@@ -154,7 +230,11 @@ namespace Network.Server
                     _TcpClient.Client.Shutdown(SocketShutdown.Both);
                     _TcpClient.Close();
                     _IsConnectionAlive = false;
+                    _NetworkConnectionType = NetworkConnectionType.NotConnected;
+                    _Endpoint = null;
                 }
+
+                _IOCPServer?.OnDisconnected(this);
             }
             catch (Exception e)
             {
@@ -163,11 +243,18 @@ namespace Network.Server
                 NetworkLogger.WriteLine(NetworkLogLevel.Error, e.StackTrace);
             }
 
-            
+
             //서버 연결되었지만 확인안된 리스트에서 제거
             //서버 연결중인 리스트에서 제거
         }
 
+        public void SetEventListener(INetworkClientEventListener eventListener)
+        {
+            using (_GeneralLocker.Write())
+            {
+                _EventListener = eventListener;
+            }
+        }
         public void Send(byte[] data)
         {
             Send(data, 0, data.Count());
@@ -177,12 +264,15 @@ namespace Network.Server
         {
             try
             {
-                using (_GeneralLocker.Write())
+                if (IsConnectionAlive == false)
+                    throw new Exception("현재 서버와 연결되어 있지 않습니다");
+
+                lock (_SendLocker)
                 {
                     NetworkTraffic sendTraffic = NetworkTraffic.CreateSendTraffic(data, offset, dataSize, this);
                     _TcpClient.Client.BeginSend(
-                        sendTraffic.HeaderPacket.TransferingData, 
-                        sendTraffic.HeaderPacket.Offset, 
+                        sendTraffic.HeaderPacket.TransferingData,
+                        sendTraffic.HeaderPacket.Offset,
                         sendTraffic.HeaderPacket.Size, SocketFlags.None, new AsyncCallback(OnSend), sendTraffic);
                 }
             }
@@ -248,14 +338,10 @@ namespace Network.Server
 
                 try
                 {
-                    using (_GeneralLocker.Write())
-                    {
-                        _TcpClient.Client.BeginSend(
-                            sendTrafficPacket.TransferingData,
-                            sendTrafficPacket.Offset,
-                            sendTrafficPacket.Size, SocketFlags.None, new AsyncCallback(OnSend), sendTrafficPacket.Traffic);
-                    }
-
+                    _TcpClient.Client.BeginSend(
+                        sendTrafficPacket.TransferingData,
+                        sendTrafficPacket.Offset,
+                        sendTrafficPacket.Size, SocketFlags.None, new AsyncCallback(OnSend), sendTrafficPacket.Traffic);
                 }
                 catch (Exception e)
                 {
@@ -280,13 +366,10 @@ namespace Network.Server
 
             try
             {
-                using (_GeneralLocker.Write())
-                {
-                    _TcpClient.Client.BeginSend(
-                        nextSendTrafficPacket.TransferingData,
-                        nextSendTrafficPacket.Offset,
-                        nextSendTrafficPacket.Size, SocketFlags.None, new AsyncCallback(OnSend), nextSendTrafficPacket.Traffic);
-                }
+                _TcpClient.Client.BeginSend(
+                    nextSendTrafficPacket.TransferingData,
+                    nextSendTrafficPacket.Offset,
+                    nextSendTrafficPacket.Size, SocketFlags.None, new AsyncCallback(OnSend), nextSendTrafficPacket.Traffic);
             }
             catch (Exception e)
             {
@@ -299,23 +382,23 @@ namespace Network.Server
             }
         }
 
-        //실제 내용 전송이 모두 완료됫을 경우
+        //실제 내용 수신이 모두 완료됫을 경우
         private void SendingContentComplete(int sendBytesSize, NetworkTrafficPacket sendTrafficPacket)
         {
+            _EventListener?.OnSendComplete(sendTrafficPacket.TransferingData);
+            _IOCPServer?.OnSend(sendTrafficPacket.TransferingData, this);
+            _OnSendComeplete?.Invoke(sendTrafficPacket.TransferingData);
         }
 
         protected override void Execute(object param)
         {
             try
             {
-                using (_GeneralLocker.Write())
-                {
-                    NetworkTraffic receiveTraffic = NetworkTraffic.CreateReceiveTraffic(NetworkPacketHeader.HeaderSize, this);
-                    _TcpClient.Client.BeginReceive(
-                        receiveTraffic.HeaderPacket.TransferingData,
-                        receiveTraffic.HeaderPacket.Offset,
-                        receiveTraffic.HeaderPacket.Size, SocketFlags.None, new AsyncCallback(OnReceive), receiveTraffic);
-                }
+                NetworkTraffic receiveTraffic = NetworkTraffic.CreateReceiveTraffic(NetworkPacketHeader.HeaderSize, this);
+                _TcpClient.Client.BeginReceive(
+                    receiveTraffic.HeaderPacket.TransferingData,
+                    receiveTraffic.HeaderPacket.Offset,
+                    receiveTraffic.HeaderPacket.Size, SocketFlags.None, new AsyncCallback(OnReceive), receiveTraffic);
             }
             catch (Exception e)
             {
@@ -353,19 +436,34 @@ namespace Network.Server
                 return;
             }
 
+            int threadid = Thread.CurrentThread.ManagedThreadId;
+            NetworkLogger.WriteLine(NetworkLogLevel.Info, "[{0}]" + receiveBytesSize + "바이트 수신", threadid);
+
             if (receiveTraffic.Status == NetworkTrafficStep.OnTransferringHeader)
+            {
+                NetworkLogger.WriteLine(NetworkLogLevel.Info, "[{0}]" + "ReceivingHeader", threadid);
                 Receiving(receiveBytesSize, receiveTraffic.HeaderPacket);
+                
+            }
             if (receiveTraffic.Status == NetworkTrafficStep.OnTransferringHeaderComplete)
             {
+                NetworkLogger.WriteLine(NetworkLogLevel.Info, "[{0}]" + "ReceivingHeaderComplete", threadid);
                 ReceivingHeaderComplete(receiveBytesSize, receiveTraffic);
+                
                 return;
             }
 
             if (receiveTraffic.Status == NetworkTrafficStep.OnTransferringContent)
+            {
+                NetworkLogger.WriteLine(NetworkLogLevel.Info, "[{0}]" + "ReceivingContent", threadid);
                 Receiving(receiveBytesSize, receiveTraffic.ContentPacket);
+                
+            }
             if (receiveTraffic.Status == NetworkTrafficStep.OnTransferringContentComplete)
             {
+                NetworkLogger.WriteLine(NetworkLogLevel.Info, "[{0}]" + "ReceivingContentComplete", threadid);
                 ReceivingContentComplete(receiveBytesSize, receiveTraffic);
+                
                 return;
             }
         }
@@ -380,15 +478,12 @@ namespace Network.Server
                     receiveTrafficPacket.Size = receiveTrafficPacket.Size - receiveBytesSize;
                     receiveTrafficPacket.Offset = receiveTrafficPacket.Offset + receiveBytesSize;
 
-                    using (_GeneralLocker.Write())
-                    {
-                        _TcpClient.Client.BeginReceive(
-                            receiveTrafficPacket.TransferingData,
-                            receiveTrafficPacket.Offset,
-                            receiveTrafficPacket.Size, SocketFlags.None, new AsyncCallback(OnReceive), receiveTrafficPacket.Traffic);
-                    }
+                    _TcpClient.Client.BeginReceive(
+                        receiveTrafficPacket.TransferingData,
+                        receiveTrafficPacket.Offset,
+                        receiveTrafficPacket.Size, SocketFlags.None, new AsyncCallback(OnReceive), receiveTrafficPacket.Traffic);
                 }
-                catch (Exception e) 
+                catch (Exception e)
                 {
                     NetworkLogger.WriteLine(NetworkLogLevel.Error, "클라이언트 [2] BeginReceive에 실패하였습니다.");
                     NetworkLogger.WriteLine(NetworkLogLevel.Error, e.Message);
@@ -414,13 +509,10 @@ namespace Network.Server
                 NetworkPacketHeader packetHeader = NetworkPacketHeader.MakeHeaderFromBytes(traffic.HeaderPacket.TransferingData);
                 traffic.ContentPacket = new NetworkTrafficPacket(packetHeader.ShouldReceiveBytesSize, traffic);
 
-                using (_GeneralLocker.Write())
-                {
-                    _TcpClient.Client.BeginReceive(
-                        traffic.ContentPacket.TransferingData,
-                        traffic.ContentPacket.Offset,
-                        traffic.ContentPacket.Size, SocketFlags.None, new AsyncCallback(OnReceive), traffic);
-                }
+                _TcpClient.Client.BeginReceive(
+                    traffic.ContentPacket.TransferingData,
+                    traffic.ContentPacket.Offset,
+                    traffic.ContentPacket.Size, SocketFlags.None, new AsyncCallback(OnReceive), traffic);
             }
             catch (Exception e)
             {
@@ -438,14 +530,15 @@ namespace Network.Server
         {
             try
             {
-                using (_GeneralLocker.Write())
-                {
-                    NetworkTraffic receiveTraffic = NetworkTraffic.CreateReceiveTraffic(NetworkPacketHeader.HeaderSize, this);
-                    _TcpClient.Client.BeginReceive(
-                        receiveTraffic.HeaderPacket.TransferingData,
-                        receiveTraffic.HeaderPacket.Offset,
-                        receiveTraffic.HeaderPacket.Size, SocketFlags.None, new AsyncCallback(OnReceive), receiveTraffic);
-                }
+                NetworkTraffic receiveTraffic = NetworkTraffic.CreateReceiveTraffic(NetworkPacketHeader.HeaderSize, this);
+                _TcpClient.Client.BeginReceive(
+                    receiveTraffic.HeaderPacket.TransferingData,
+                    receiveTraffic.HeaderPacket.Offset,
+                    receiveTraffic.HeaderPacket.Size, SocketFlags.None, new AsyncCallback(OnReceive), receiveTraffic);
+
+                _IOCPServer?.OnReceive(traffic.ContentPacket.TransferingData, this);
+                _EventListener?.OnReceiveComplete(traffic.ContentPacket.TransferingData);
+                _OnReceiveComeplete?.Invoke(traffic.ContentPacket.TransferingData);
             }
             catch (Exception e)
             {

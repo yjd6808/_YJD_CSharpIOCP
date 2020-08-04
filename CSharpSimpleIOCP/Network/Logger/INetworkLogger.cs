@@ -4,7 +4,7 @@
 // @PURPOSE     : 
 // ===============================
 
-namespace Network.Logger
+namespace CSharpSimpleIOCP.Network.Logger
 {
     public interface INetworkLogger
     {

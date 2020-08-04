@@ -11,9 +11,10 @@
 using Colorful;
 using System.Drawing;
 
-namespace Network.Logger
+namespace CSharpSimpleIOCP.Network.Logger
 {
 
+    //출력할 로그레벨
     [System.Flags]
     public enum NetworkLogLevel : int
     {
@@ -33,12 +34,18 @@ namespace Network.Logger
 
         public static void SetLogger(INetworkLogger logger)
         {
-            _Logger = logger;
+            lock (_LogLock)
+            {
+                _Logger = logger;
+            }
         }
 
         public static void SetPrintEnable(NetworkLogLevel printableLogLevel)
         {
-            _PrintableLogLevel = printableLogLevel;
+            lock (_LogLock)
+            {
+                _PrintableLogLevel = printableLogLevel;
+            }
         }
 
         public static void Write(NetworkLogLevel logLevel, string msg, params object[] args)

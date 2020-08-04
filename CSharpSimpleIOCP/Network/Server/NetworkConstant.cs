@@ -4,7 +4,7 @@
 // @PURPOSE     : 네트워크 설정정보
 // ===============================
 
-namespace Network.Server
+namespace CSharpSimpleIOCP.Network.Server
 {
     public static class NetworkConstant
     {

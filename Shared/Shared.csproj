@@ -45,8 +45,6 @@
     <Compile Include="NetworkByteConverter.cs" />
     <Compile Include="NetworkPacetks.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="Util\OveridableThread.cs" />
-    <Compile Include="Util\ReadWriteLockSlimExtension.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

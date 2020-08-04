@@ -10,7 +10,7 @@
 using System;
 using System.Threading;
 
-namespace Shared.Util
+namespace CSharpSimpleIOCP.Util
 {
     public static class ReadWriteLockSlimExtension
     {

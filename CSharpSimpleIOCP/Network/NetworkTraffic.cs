@@ -5,8 +5,7 @@
 // ===============================
 
 
-using NetworkShared;
-using Shared.Util;
+using CSharpSimpleIOCP.Util;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -15,7 +14,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Network
+namespace CSharpSimpleIOCP.Network
 {
     public enum NetworkTrafficStep : int
     {

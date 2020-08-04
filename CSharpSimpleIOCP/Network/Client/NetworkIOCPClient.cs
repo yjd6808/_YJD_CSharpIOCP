@@ -1,36 +1,30 @@
 ﻿// ===============================
 // @AUTHOR      : 윤정도
 // @CREATE DATE : 2020-08-03 오후 7:43:34   
-// @PURPOSE     : IOCP 클라이언트
+// @PURPOSE     : IOCP 클라이언트 - 서버에서 쓰는 NetworkClient를 확장해서씀.
 // ===============================
 
-using Network;
-using Network.Logger;
-using Network.Server;
-using Shared.Util;
+using CSharpSimpleIOCP.Network.Logger;
+using CSharpSimpleIOCP.Network.Server;
+using CSharpSimpleIOCP.Util;
 using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 
-namespace Server.Network.Client
+namespace CSharpSimpleIOCP.Network.Client
 {
-    public static class NetworkIOCPClientDelegates
-    {
-        public delegate void OnConnectedHandler(long tick);
-        public delegate void OnDisconnectedHandler(long tick);
-        public delegate void OnReceiveCompleteHandler(byte[] bytes);
-        public delegate void OnSendCompleteHandler(byte[] bytes);
-    }
-
     public class NetworkIOCPClient : NetworkClient
     {
         private int _ConnectionTimeout;
 
-        public event NetworkIOCPClientDelegates.OnConnectedHandler OnConnected;
-        public event NetworkIOCPClientDelegates.OnDisconnectedHandler OnDisconnected;
-        public event NetworkIOCPClientDelegates.OnSendCompleteHandler OnSendPacket;
-        public event NetworkIOCPClientDelegates.OnReceiveCompleteHandler OnReceivePacket;
+        #region 델리게이트와 이벤트들
+        public delegate void OnConnectedHandler(long tick);
+        public delegate void OnDisconnectedHandler(long tick);
+
+        private event OnConnectedHandler _OnConnected;
+        private event OnDisconnectedHandler _OnDisconnected;
+        #endregion
 
         public NetworkIOCPClient() : base()
         {
@@ -89,7 +83,43 @@ namespace Server.Network.Client
             }
         }
 
-        
+        public event OnConnectedHandler OnConnected
+        {
+            add
+            {
+                using (_GeneralLocker.Write())
+                {
+                    _OnConnected += value;
+                }
+            }
+
+            remove
+            {
+                using (_GeneralLocker.Write())
+                {
+                    _OnConnected -= value;
+                }
+            }
+        }
+
+        public event OnDisconnectedHandler OnDisconnected
+        {
+            add
+            {
+                using (_GeneralLocker.Write())
+                {
+                    _OnDisconnected += value;
+                }
+            }
+
+            remove
+            {
+                using (_GeneralLocker.Write())
+                {
+                    _OnDisconnected -= value;
+                }
+            }
+        }
 
         #endregion
 
@@ -108,6 +138,9 @@ namespace Server.Network.Client
             {
                 _TcpClient = null;
             }
+
+            _OnConnected?.Invoke(DateTime.Now.Ticks);
+            ((INetworkIOCPClientEventListener)_EventListener)?.OnDisconnected(DateTime.Now.Ticks);
         }
 
         public void Connect(IPEndPoint targetEndpoint)
@@ -170,9 +203,19 @@ namespace Server.Network.Client
         {
             try
             {
-                _TcpClient.EndConnect(asyncResult);
+                using (_GeneralLocker.Write())
+                {
+                    if (_TcpClient == null)
+                        throw new Exception("클라이언트의 연결이 이미 끊어졌습니다.");
+
+                    _TcpClient.EndConnect(asyncResult);
+                    _IsConnectionAlive = true;
+                }
+
+                _OnConnected?.Invoke(DateTime.Now.Ticks);
+                ((INetworkIOCPClientEventListener)_EventListener)?.OnConnected(DateTime.Now.Ticks);
+
                 NetworkLogger.WriteLine(NetworkLogLevel.Info, _Endpoint + " 서버에 접속하였습니다.");
-                OnConnected?.Invoke(DateTime.Now.Ticks);
             }
             catch (Exception e)
             {
