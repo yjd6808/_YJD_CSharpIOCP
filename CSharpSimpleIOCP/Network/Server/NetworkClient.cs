@@ -17,6 +17,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using CSharpSimpleIOCP.Network.Client;
 using CSharpSimpleIOCP.Util;
+using System.Collections.Concurrent;
 
 namespace CSharpSimpleIOCP.Network.Server
 {
@@ -29,25 +30,29 @@ namespace CSharpSimpleIOCP.Network.Server
 
     public class NetworkClient : NetworkOveridableThread
     {
-        protected string _UserSerial;                           //클라 ID - 절대 중복되면 안됨
+        protected string _UserSerial;                                      //클라 ID - 절대 중복되면 안됨
         protected long _ConnectedTime;
         protected TcpClient _TcpClient;
-        protected volatile bool _IsConnectionAlive;             //서버와 연결상태 여부
+        protected volatile bool _IsConnectionAlive;                        //서버와 연결상태 여부
         protected ReaderWriterLockSlim _GeneralLocker;
         protected bool _NoDelay;
-        protected IPEndPoint _Endpoint;                         //접속자의 아이피
-        protected INetworkClientEventListener _EventListener;   //이벤트리스너
-        protected NetworkConnectionType _NetworkConnectionType; //연결타입 - 로컬접속인지 외부접속인지
-
+        protected IPEndPoint _Endpoint;                                    //접속자의 아이피
+        protected INetworkClientEventListener _EventListener;              //이벤트리스너
+        protected NetworkConnectionType _NetworkConnectionType;            //연결타입 - 로컬접속인지 외부접속인지
+        
         private NetworkIOCPServer _IOCPServer;
-        private object _SendLocker;
+        private EventWaitHandle _SendWaitHandle;
+        private ConcurrentQueue<NetworkTraffic> _SendWaitQueue;
+        
 
         #region 델리게이트와 이벤트들
         public delegate void OnReceiveCompleteHandler(byte[] bytes);
         public delegate void OnSendCompleteHandler(byte[] bytes);
+        public delegate void OnDisconnectedHandler(long tick);
 
-        public event OnReceiveCompleteHandler _OnReceiveComeplete;
-        public event OnSendCompleteHandler _OnSendComeplete;
+        private event OnReceiveCompleteHandler _OnReceiveComeplete;
+        private event OnSendCompleteHandler _OnSendComeplete;
+        private event OnDisconnectedHandler _OnDisconnected;
         #endregion
 
         public NetworkClient()
@@ -58,7 +63,8 @@ namespace CSharpSimpleIOCP.Network.Server
             _ConnectedTime = 0;
             _NetworkConnectionType = NetworkConnectionType.NotConnected;
             _NoDelay = true;
-            _SendLocker = new object();
+            _SendWaitHandle = new EventWaitHandle(true, EventResetMode.AutoReset);
+            _SendWaitQueue = new ConcurrentQueue<NetworkTraffic>();
         }
 
         public NetworkClient(long connectedTime, TcpClient tcpClient, NetworkIOCPServer iocpServer)
@@ -74,10 +80,12 @@ namespace CSharpSimpleIOCP.Network.Server
             _NetworkConnectionType = _Endpoint != null ? NetworkConnectionType.Remote : NetworkConnectionType.Local;
             _Endpoint = _TcpClient.Client.LocalEndPoint as IPEndPoint;
             _IOCPServer = iocpServer;
-            _SendLocker = new object();
+            _SendWaitHandle = new EventWaitHandle(true, EventResetMode.AutoReset);
+            _SendWaitQueue = new ConcurrentQueue<NetworkTraffic>();
+            _IOCPServer?.OnConnected(this);
         }
 
-        #region Getter
+        #region Getter/Setter
 
         public IPEndPoint Endpoint
         {
@@ -205,6 +213,25 @@ namespace CSharpSimpleIOCP.Network.Server
                 }
             }
         }
+
+        public event OnDisconnectedHandler OnDisconnected
+        {
+            add
+            {
+                using (_GeneralLocker.Write())
+                {
+                    _OnDisconnected += value;
+                }
+            }
+
+            remove
+            {
+                using (_GeneralLocker.Write())
+                {
+                    _OnDisconnected -= value;
+                }
+            }
+        }
         #endregion
 
         public void Start()
@@ -234,6 +261,8 @@ namespace CSharpSimpleIOCP.Network.Server
                     _Endpoint = null;
                 }
 
+                _OnDisconnected?.Invoke(DateTime.Now.Ticks);
+                ((INetworkIOCPClientEventListener)_EventListener)?.OnDisconnected(DateTime.Now.Ticks);
                 _IOCPServer?.OnDisconnected(this);
             }
             catch (Exception e)
@@ -267,13 +296,19 @@ namespace CSharpSimpleIOCP.Network.Server
                 if (IsConnectionAlive == false)
                     throw new Exception("현재 서버와 연결되어 있지 않습니다");
 
-                lock (_SendLocker)
+                NetworkTraffic sendTraffic = NetworkTraffic.CreateSendTraffic(data, offset, dataSize, this);
+
+                //만약 크리티컬섹션에 진입한 상태라면 큐에 넣어줬다가 전송끝나면 처리하도록 하자
+                if (_SendWaitHandle.WaitOne(0))
                 {
-                    NetworkTraffic sendTraffic = NetworkTraffic.CreateSendTraffic(data, offset, dataSize, this);
                     _TcpClient.Client.BeginSend(
                         sendTraffic.HeaderPacket.TransferingData,
                         sendTraffic.HeaderPacket.Offset,
                         sendTraffic.HeaderPacket.Size, SocketFlags.None, new AsyncCallback(OnSend), sendTraffic);
+                }
+                else
+                {
+                    _SendWaitQueue.Enqueue(sendTraffic);
                 }
             }
             catch (Exception e)
@@ -292,7 +327,8 @@ namespace CSharpSimpleIOCP.Network.Server
 
             try
             {
-                sendBytesSize = _TcpClient.Client.EndSend(asyncResult);
+                if (_TcpClient != null)
+                    sendBytesSize = _TcpClient.Client.EndSend(asyncResult);
             }
             catch (Exception e)
             {
@@ -311,18 +347,29 @@ namespace CSharpSimpleIOCP.Network.Server
                 return;
             }
 
+            int threadid = Thread.CurrentThread.ManagedThreadId;
+            NetworkLogger.WriteLine(NetworkLogLevel.Debug, "[{0}]" + sendBytesSize + "바이트 송신", threadid);
+
             if (sendTraffic.Status == NetworkTrafficStep.OnTransferringHeader)
+            {
+                NetworkLogger.WriteLine(NetworkLogLevel.Debug, "[{0}]" + "SendingHeader", threadid);
                 Sending(sendBytesSize, sendTraffic.HeaderPacket);
+            }
             if (sendTraffic.Status == NetworkTrafficStep.OnTransferringHeaderComplete)
             {
+                NetworkLogger.WriteLine(NetworkLogLevel.Debug, "[{0}]" + "SendingHeader Complete", threadid);
                 SendingHeaderComplete(sendBytesSize, sendTraffic.ContentPacket);
                 return;
             }
 
             if (sendTraffic.Status == NetworkTrafficStep.OnTransferringContent)
+            {
+                NetworkLogger.WriteLine(NetworkLogLevel.Debug, "[{0}]" + "SendingContent", threadid);
                 Sending(sendBytesSize, sendTraffic.ContentPacket);
+            }
             if (sendTraffic.Status == NetworkTrafficStep.OnTransferringContentComplete)
             {
+                NetworkLogger.WriteLine(NetworkLogLevel.Debug, "[{0}]" + "SendingContent Complete", threadid);
                 SendingContentComplete(sendBytesSize, sendTraffic.ContentPacket);
                 return;
             }
@@ -363,6 +410,7 @@ namespace CSharpSimpleIOCP.Network.Server
         private void SendingHeaderComplete(int sendBytesSize, NetworkTrafficPacket nextSendTrafficPacket)
         {
             nextSendTrafficPacket.Traffic.SetNextTransferringStep();
+            NetworkLogger.WriteLine(NetworkLogLevel.Debug, "-- SendingHeader Complete : " + nextSendTrafficPacket.Traffic.HeaderPacketInfo);
 
             try
             {
@@ -388,9 +436,39 @@ namespace CSharpSimpleIOCP.Network.Server
             _EventListener?.OnSendComplete(sendTrafficPacket.TransferingData);
             _IOCPServer?.OnSend(sendTrafficPacket.TransferingData, this);
             _OnSendComeplete?.Invoke(sendTrafficPacket.TransferingData);
+
+            //송신 대기중인 패킷이 있을 경우 처리진행
+            if (_SendWaitQueue.IsEmpty)
+            {
+                _SendWaitHandle.Set();
+                return;
+            }
+
+            if (_SendWaitQueue.TryDequeue(out NetworkTraffic sendWaitTraffic))
+            {
+                try
+                {
+                    _TcpClient.Client.BeginSend(
+                        sendWaitTraffic.HeaderPacket.TransferingData,
+                        sendWaitTraffic.HeaderPacket.Offset,
+                        sendWaitTraffic.HeaderPacket.Size, SocketFlags.None, new AsyncCallback(OnSend), sendWaitTraffic);
+                }
+                catch (Exception e)
+                {
+                    NetworkLogger.WriteLine(NetworkLogLevel.Error, "클라이언트 [2] BeginSend에 실패하였습니다.");
+                    NetworkLogger.WriteLine(NetworkLogLevel.Error, e.Message);
+                    NetworkLogger.WriteLine(NetworkLogLevel.Error, e.StackTrace);
+
+                    Disconnect();
+                }
+            }
+            else
+            {
+                _SendWaitHandle.Set();
+            }
         }
 
-        protected override void Execute(object param)
+        protected override void Execute(object param = null)
         {
             try
             {
@@ -437,17 +515,17 @@ namespace CSharpSimpleIOCP.Network.Server
             }
 
             int threadid = Thread.CurrentThread.ManagedThreadId;
-            NetworkLogger.WriteLine(NetworkLogLevel.Info, "[{0}]" + receiveBytesSize + "바이트 수신", threadid);
+            NetworkLogger.WriteLine(NetworkLogLevel.Debug, "[{0}]" + receiveBytesSize + "바이트 수신", threadid);
 
             if (receiveTraffic.Status == NetworkTrafficStep.OnTransferringHeader)
             {
-                NetworkLogger.WriteLine(NetworkLogLevel.Info, "[{0}]" + "ReceivingHeader", threadid);
+                NetworkLogger.WriteLine(NetworkLogLevel.Debug, "[{0}]" + "ReceivingHeader", threadid);
                 Receiving(receiveBytesSize, receiveTraffic.HeaderPacket);
                 
             }
             if (receiveTraffic.Status == NetworkTrafficStep.OnTransferringHeaderComplete)
             {
-                NetworkLogger.WriteLine(NetworkLogLevel.Info, "[{0}]" + "ReceivingHeaderComplete", threadid);
+                NetworkLogger.WriteLine(NetworkLogLevel.Debug, "[{0}]" + "ReceivingHeaderComplete", threadid);
                 ReceivingHeaderComplete(receiveBytesSize, receiveTraffic);
                 
                 return;
@@ -455,13 +533,13 @@ namespace CSharpSimpleIOCP.Network.Server
 
             if (receiveTraffic.Status == NetworkTrafficStep.OnTransferringContent)
             {
-                NetworkLogger.WriteLine(NetworkLogLevel.Info, "[{0}]" + "ReceivingContent", threadid);
+                NetworkLogger.WriteLine(NetworkLogLevel.Debug, "[{0}]" + "ReceivingContent", threadid);
                 Receiving(receiveBytesSize, receiveTraffic.ContentPacket);
                 
             }
             if (receiveTraffic.Status == NetworkTrafficStep.OnTransferringContentComplete)
             {
-                NetworkLogger.WriteLine(NetworkLogLevel.Info, "[{0}]" + "ReceivingContentComplete", threadid);
+                NetworkLogger.WriteLine(NetworkLogLevel.Debug, "[{0}]" + "ReceivingContentComplete", threadid);
                 ReceivingContentComplete(receiveBytesSize, receiveTraffic);
                 
                 return;
@@ -504,6 +582,7 @@ namespace CSharpSimpleIOCP.Network.Server
         private void ReceivingHeaderComplete(int receiveBytesSize, NetworkTraffic traffic)
         {
             traffic.SetNextTransferringStep();
+            NetworkLogger.WriteLine(NetworkLogLevel.Debug, "-- ReceivingHeader Complete : " + traffic.HeaderPacketInfo);
             try
             {
                 NetworkPacketHeader packetHeader = NetworkPacketHeader.MakeHeaderFromBytes(traffic.HeaderPacket.TransferingData);

@@ -20,10 +20,8 @@ namespace CSharpSimpleIOCP.Network.Client
 
         #region 델리게이트와 이벤트들
         public delegate void OnConnectedHandler(long tick);
-        public delegate void OnDisconnectedHandler(long tick);
 
         private event OnConnectedHandler _OnConnected;
-        private event OnDisconnectedHandler _OnDisconnected;
         #endregion
 
         public NetworkIOCPClient() : base()
@@ -102,25 +100,6 @@ namespace CSharpSimpleIOCP.Network.Client
             }
         }
 
-        public event OnDisconnectedHandler OnDisconnected
-        {
-            add
-            {
-                using (_GeneralLocker.Write())
-                {
-                    _OnDisconnected += value;
-                }
-            }
-
-            remove
-            {
-                using (_GeneralLocker.Write())
-                {
-                    _OnDisconnected -= value;
-                }
-            }
-        }
-
         #endregion
 
 
@@ -138,9 +117,6 @@ namespace CSharpSimpleIOCP.Network.Client
             {
                 _TcpClient = null;
             }
-
-            _OnConnected?.Invoke(DateTime.Now.Ticks);
-            ((INetworkIOCPClientEventListener)_EventListener)?.OnDisconnected(DateTime.Now.Ticks);
         }
 
         public void Connect(IPEndPoint targetEndpoint)
@@ -153,6 +129,7 @@ namespace CSharpSimpleIOCP.Network.Client
             Connect(address.ToString(), port);
         }
 
+        //비동기임... 이름을 StartConnect로 바꿔야하나..
         public void Connect(string hostname, int port)
         {
             using (_GeneralLocker.Write())
@@ -187,6 +164,8 @@ namespace CSharpSimpleIOCP.Network.Client
                     _Endpoint = targetEndpoint;
                     _TcpClient.BeginConnect(targetEndpoint.Address, targetEndpoint.Port, new AsyncCallback(OnTcpServerConnected), this)
                         .AsyncWaitHandle.WaitOne(_ConnectionTimeout);
+
+                    
                 }
             }
             catch (Exception e )
@@ -212,9 +191,9 @@ namespace CSharpSimpleIOCP.Network.Client
                     _IsConnectionAlive = true;
                 }
 
+                base.Execute(); //리시브 시작
                 _OnConnected?.Invoke(DateTime.Now.Ticks);
                 ((INetworkIOCPClientEventListener)_EventListener)?.OnConnected(DateTime.Now.Ticks);
-
                 NetworkLogger.WriteLine(NetworkLogLevel.Info, _Endpoint + " 서버에 접속하였습니다.");
             }
             catch (Exception e)

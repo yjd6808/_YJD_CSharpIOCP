@@ -90,17 +90,19 @@ namespace CSharpSimpleIOCP.Network.Logger
         private static void DefaultWriteInConsole(NetworkLogLevel logLevel, string msg, params object[] args)
         {
             Color originalColor = Console.ForegroundColor;
-
-            if (logLevel == NetworkLogLevel.Info && (logLevel & NetworkLogLevel.Info) == NetworkLogLevel.Info)
-                Console.Write("[정보] ", Color.LightSeaGreen);
-            else if (logLevel == NetworkLogLevel.Debug && (logLevel & NetworkLogLevel.Debug) == NetworkLogLevel.Debug)
-                Console.Write("[디버그] ", Color.Gray);
-            else if (logLevel == NetworkLogLevel.Error && (logLevel & NetworkLogLevel.Error) == NetworkLogLevel.Error)
-                Console.Write("[오류] ", Color.Gray);
-            else if (logLevel == NetworkLogLevel.Warning && (logLevel & NetworkLogLevel.Warning) == NetworkLogLevel.Warning)
-                Console.Write("[경고] ", Color.Gray);
-
             Console.ForegroundColor = Color.GhostWhite;
+
+            if (logLevel == NetworkLogLevel.Info && (_PrintableLogLevel & NetworkLogLevel.Info) == NetworkLogLevel.Info)
+                Console.Write("[정보] ", Color.LightSeaGreen);
+            else if (logLevel == NetworkLogLevel.Debug && (_PrintableLogLevel & NetworkLogLevel.Debug) == NetworkLogLevel.Debug)
+                Console.Write("[디버그] ", Color.Gray);
+            else if (logLevel == NetworkLogLevel.Error && (_PrintableLogLevel & NetworkLogLevel.Error) == NetworkLogLevel.Error)
+                Console.Write("[오류] ", Color.Gray);
+            else if (logLevel == NetworkLogLevel.Warning && (_PrintableLogLevel & NetworkLogLevel.Warning) == NetworkLogLevel.Warning)
+                Console.Write("[경고] ", Color.Gray);
+            else
+                return;
+
             Console.Write(msg, args);
             Console.ForegroundColor = originalColor;
         }

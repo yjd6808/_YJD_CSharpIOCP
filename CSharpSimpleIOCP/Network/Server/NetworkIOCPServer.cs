@@ -148,6 +148,25 @@ namespace CSharpSimpleIOCP.Network.Server
             }
         }
 
+        public event OnClientDisconnectedHandler OnClientDisconnected
+        {
+            add
+            {
+                using (_GeneralLocker.Write())
+                {
+                    _OnClientDisconnected += value;
+                }
+            }
+
+            remove
+            {
+                using (_GeneralLocker.Write())
+                {
+                    _OnClientDisconnected -= value;
+                }
+            }
+        }
+
         public event OnSendCompleteHandler OnSendComplete
         {
             add
@@ -183,6 +202,14 @@ namespace CSharpSimpleIOCP.Network.Server
                 {
                     _OnReceiveComplete -= value;
                 }
+            }
+        }
+
+        internal INetworkIOCPServerEventListener EventListener
+        {
+            get
+            {
+                return _EventListener;
             }
         }
 
@@ -319,6 +346,13 @@ namespace CSharpSimpleIOCP.Network.Server
         internal void OnDisconnected(NetworkClient targetClient)
         {
             _EventListener?.OnClientDisconnected(targetClient);
+            _OnClientDisconnected?.Invoke(targetClient);
+        }
+
+        internal void OnConnected(NetworkClient targetClient)
+        {
+            _EventListener?.OnClientConnected(targetClient);
+            _OnClientConnected?.Invoke(targetClient);
         }
 
         /// <summary>

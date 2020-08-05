@@ -1,10 +1,12 @@
 ﻿// ===============================
 // @AUTHOR      : 윤정도
 // @CREATE DATE : 2020-08-02 오전 9:31:02   
-// @PURPOSE     : 비동기 송수신 트래픽
+// @PURPOSE     : 비동기 송수신 트래픽정보
+//                송수신간에 이뤄지는 트래픽데이터 C++ IOCP의 OverlappedIO 객체라고 보면될듯
 // ===============================
 
 
+using CSharpSimpleIOCP.Network.Logger;
 using CSharpSimpleIOCP.Util;
 using System;
 using System.Collections.Generic;
@@ -16,6 +18,13 @@ using System.Threading.Tasks;
 
 namespace CSharpSimpleIOCP.Network
 {
+    public enum NetworkTransferringType : int
+    {
+        Send,
+        Receive
+    }
+
+
     public enum NetworkTrafficStep : int
     {
         OnTransferringHeader = 0,           //헤더 패킷 통신 상태
@@ -35,6 +44,7 @@ namespace CSharpSimpleIOCP.Network
 
         public int ShouldReceiveBytesSize { get; }
         public long ReceivedTime { get; }
+        
 
 
         /// <summary>
@@ -52,7 +62,7 @@ namespace CSharpSimpleIOCP.Network
         /// </summary>
         /// <param name="shouldReceiveBytesSize"></param>
         /// <returns></returns>
-        public static byte[] MakeHeaderBytes(int shouldReceiveBytesSize)
+        internal static byte[] MakeHeaderBytes(int shouldReceiveBytesSize)
         {
             if (shouldReceiveBytesSize < 0)
                 return null;
@@ -66,15 +76,31 @@ namespace CSharpSimpleIOCP.Network
             }
         }
 
-        public static NetworkPacketHeader MakeHeaderFromBytes(byte[] headerBytes)
+        internal static NetworkPacketHeader MakeHeaderFromBytes(byte[] headerBytes)
         {
+            if (headerBytes.Length != HeaderSize)
+                return null;
+
             ulong curHeaderCheck = BitConverter.ToUInt64(headerBytes, 0);
             int shouldReceive = BitConverter.ToInt32(headerBytes, 8);
             int padding = BitConverter.ToInt32(headerBytes, 12);
 
             if (HeaderCheck != curHeaderCheck || shouldReceive < 0 || padding != 0)
                 return null;
+
             return new NetworkPacketHeader(shouldReceive);
+        }
+
+        internal static string MakeHeaderInfo(byte[] headerBytes)
+        {
+            if (headerBytes.Length != HeaderSize)
+                return null;
+
+            ulong curHeaderCheck = BitConverter.ToUInt64(headerBytes, 0);
+            int shouldReceive = BitConverter.ToInt32(headerBytes, 8);
+            int padding = BitConverter.ToInt32(headerBytes, 12);
+
+            return string.Format($"HeaderCheck {curHeaderCheck:X} / " + $"shouldReceive {shouldReceive} / " + $"padding {padding}");
         }
     }
 
@@ -85,7 +111,7 @@ namespace CSharpSimpleIOCP.Network
         public int Size { get; set; }                          //트래픽 크기
         public NetworkTraffic Traffic { get; }                 //소속된 트래픽
 
-        public NetworkTrafficPacket(NetworkTraffic traffic)
+        internal NetworkTrafficPacket(NetworkTraffic traffic)
         {
             TransferingData = null;
             Offset = 0;
@@ -94,7 +120,7 @@ namespace CSharpSimpleIOCP.Network
         }
 
         //송신시 할당
-        public NetworkTrafficPacket(byte[] data, int offset, int size, NetworkTraffic traffic)
+        internal NetworkTrafficPacket(byte[] data, int offset, int size, NetworkTraffic traffic)
         {
             TransferingData = data;
             Offset = offset;
@@ -103,7 +129,7 @@ namespace CSharpSimpleIOCP.Network
         }
 
         //수신시 할당
-        public NetworkTrafficPacket(int readSize, NetworkTraffic traffic)
+        internal NetworkTrafficPacket(int readSize, NetworkTraffic traffic)
         {
             TransferingData = new byte[readSize];
             Offset = 0;
@@ -119,6 +145,7 @@ namespace CSharpSimpleIOCP.Network
         private NetworkTrafficPacket _ContentPacket;        //컨텐츠 패킷
         private object _Tag;                                //트래픽의 태그 - 송신자 또는 수신자의 정보를 담으면됨
         private NetworkTrafficStep _Status;                 //트래픽의 상태 - 패킷 유효성 체크 중인지 / 체크가 완료되서 송, 수신 중인지
+        private NetworkTransferringType _TransferringType;  //송신 트래픽인지 송신 트래픽인지
         private readonly ReaderWriterLockSlim _PacketLock;  //패킷 락
 
         //수신 트래픽생성
@@ -128,6 +155,7 @@ namespace CSharpSimpleIOCP.Network
             _ContentPacket = new NetworkTrafficPacket(this);
 
             _Status = NetworkTrafficStep.OnTransferringHeader;
+            _TransferringType = NetworkTransferringType.Receive;
             _Tag = tag;
 
             _PacketLock = new ReaderWriterLockSlim(LockRecursionPolicy.SupportsRecursion);
@@ -147,6 +175,7 @@ namespace CSharpSimpleIOCP.Network
             _ContentPacket.Size = size;
 
             _Status = NetworkTrafficStep.OnTransferringHeader;
+            _TransferringType = NetworkTransferringType.Send;
             _Tag = tag;
 
             _PacketLock = new ReaderWriterLockSlim(LockRecursionPolicy.SupportsRecursion);
@@ -187,6 +216,17 @@ namespace CSharpSimpleIOCP.Network
             }
         }
 
+        public string HeaderPacketInfo
+        {
+            get
+            {
+                using (_PacketLock.Read())
+                {
+                    return NetworkPacketHeader.MakeHeaderInfo(_HeaderPacket.TransferingData);
+                }
+            }
+        }
+
         public NetworkTrafficPacket ContentPacket
         {
             get
@@ -204,23 +244,33 @@ namespace CSharpSimpleIOCP.Network
                     _ContentPacket = value;
                 }
             }
+        }
 
+        public NetworkTransferringType TransferringType
+        {
+            get
+            {
+                using (_PacketLock.Write())
+                {
+                    return _TransferringType;
+                }
+            }
         }
 
 
         #endregion
 
-        public static NetworkTraffic CreateReceiveTraffic(int readSize, object tag)
+        internal static NetworkTraffic CreateReceiveTraffic(int readSize, object tag)
         {
             return new NetworkTraffic(readSize, tag);
         }
 
-        public static NetworkTraffic CreateSendTraffic(byte[] data, int offset, int size, object tag)
+        internal static NetworkTraffic CreateSendTraffic(byte[] data, int offset, int size, object tag)
         {
             return new NetworkTraffic(data, offset, size, tag);
         }
 
-        public void SetNextTransferringStep()
+        internal void SetNextTransferringStep()
         {
             using (_PacketLock.Write())
             {
