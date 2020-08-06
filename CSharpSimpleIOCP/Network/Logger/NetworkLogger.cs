@@ -30,7 +30,7 @@ namespace CSharpSimpleIOCP.Network.Logger
     {
         private static INetworkLogger _Logger = null;
         private static object _LogLock = new object();
-        private static NetworkLogLevel _PrintableLogLevel = NetworkLogLevel.FullOption;      //전부 출력하도록
+        private static NetworkLogLevel _PrintableLogLevel = NetworkLogLevel.None;//NetworkLogLevel.FullOption & ~NetworkLogLevel.Error;
 
         public static void SetLogger(INetworkLogger logger)
         {

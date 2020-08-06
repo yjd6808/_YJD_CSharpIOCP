@@ -10,6 +10,5 @@ namespace CSharpSimpleIOCP.Network
 {
     interface INetworkBase
     {
-        void SetLogger(INetworkLogger logger);
     }
 }

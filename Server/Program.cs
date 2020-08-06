@@ -1,4 +1,5 @@
-﻿using CSharpSimpleIOCP.Network.Client;
+﻿using CSharpSimpleIOCP.Network;
+using CSharpSimpleIOCP.Network.Client;
 using CSharpSimpleIOCP.Network.Logger;
 using CSharpSimpleIOCP.Network.Server;
 using CSharpSimpleIOCP.Util;
@@ -15,140 +16,51 @@ namespace Server
 {
     class Program
     {
-        class Threading
+        public class ServerEventListener : INetworkIOCPServerEventListener
         {
-            private int count = 0;
-            public static EventWaitHandle _waitHandle;
-
-            public Threading()
+            public void OnClientConnected(NetworkClient client)
             {
-                Console.Write("1:AutoResetEvent\t 2:ManualResetEvent - ");
-                switch (Console.ReadKey().KeyChar)
-                {
-                    case '1':
-                        _waitHandle = new AutoResetEvent(true);
-                        break;
-                    case '2':
-                        _waitHandle = new ManualResetEvent(true);
-                        break;
-                }
-                Console.WriteLine("");
-
-                Thread T1 = new Thread(new ThreadStart(Work));
-                Thread T2 = new Thread(new ThreadStart(Work));
-                Thread T3 = new Thread(new ThreadStart(Work));
-                Thread T4 = new Thread(new ThreadStart(Work));
-
-                T1.Start();
-                T2.Start();
-                T3.Start();
-                T4.Start();
+                Console.Write(client.Endpoint + "가 접속했습니다.");
             }
 
-            private void Work()
+            public void OnClientDisconnected(NetworkClient client)
             {
-                Console.WriteLine($"[{Thread.CurrentThread.ManagedThreadId}] " + "WaitOne Call!");
-                _waitHandle.Reset(); //true -> false로 만듬
-                _waitHandle.WaitOne(); //true 상태여야 지나갈 수 있음
-                for (int i = 0; i < 5; i++)
-                {
-                    Console.WriteLine($"[{Thread.CurrentThread.ManagedThreadId}] " + count++);
-                    Thread.Sleep(1000);
-                }
-                _waitHandle.Set(); //false -> true로 만듬
+                Console.Write(client.Endpoint + "가 접속을 종료했습니다.");
+            }
+
+            public void OnReceiveComplete(NetworkDataWriter networkDataWriter, NetworkClient targetClient)
+            {
+                //에코전송
+                Console.WriteLine("클라로부터 수신 : " + networkDataWriter.PeekString());
+                targetClient.Send(networkDataWriter);
+            }
+
+            public void OnSendComplete(NetworkDataWriter networkDataWriter, NetworkClient targetClient)
+            {
+                Console.WriteLine("클라로 전송완료 : " + networkDataWriter.PeekString());
+            }
+
+            public void OnServerStarted(long tick)
+            {
+                Console.WriteLine(new DateTime(tick).ToString("yyyy-MM-dd HH-mm-ss") + " 서버가 시작되었습니다.");
+            }
+
+            public void OnServerStopped(long tick)
+            {
+                Console.WriteLine(new DateTime(tick).ToString("yyyy-MM-dd HH-mm-ss") + " 서버가 종료되었습니다.");
             }
         }
-        public static EventWaitHandle _waitHandle;
 
         static void Main(string[] args)
         {
-            //Threading t = new Threading();
-            //Console.ReadKey();
-            NetworkLogger.SetPrintEnable((NetworkLogLevel.FullOption & ~NetworkLogLevel.Debug));
-
-            new Thread(() =>
-            {
-                NetworkIOCPServer iocpServer = new NetworkIOCPServer();
-                iocpServer.Start();
-                iocpServer.OnClientConnected += (client) =>
-                {
-                    Console.WriteLine("[서버]" + client.Endpoint + " 클라가 접속했습니다");
-                    client.Send(new byte[1]);
-                };
-                iocpServer.OnClientDisconnected += (client) =>
-                {
-                    Console.WriteLine("[서버] " + client.Endpoint + " 클라가 접속을 종료했습니다.");
-                };
-
-                iocpServer.OnReceiveComplete += (data, client) =>
-                {
-                    Console.WriteLine("[서버] " + client.Endpoint + " / " + data[0] + "수신");
-                };
-
-                iocpServer.OnSendComplete += (data, client) =>
-                {
-                    Console.WriteLine("[서버] " + client.Endpoint + " / " + data[0] + "송신");
-                };
-
-                iocpServer.OnServerStopped += (tick) =>
-                {
-                    Console.WriteLine("[서버] " + tick + " tick 타임에 서버가 종료되었습니다");
-                };
-
-                iocpServer.OnServerStarted += (tick) =>
-                {
-                    Console.WriteLine("[서버] " + tick + " tick 타임에 서버가 시작되었습니다");
-                };
-
-                while (true)
-                {
-
-                }
-            }).Start();
-
-            Thread.Sleep(1500);
-
-            new Thread(() =>
-            {
-                NetworkIOCPClient iocpClient = new NetworkIOCPClient()
-                {
-                    ConnectionTimeout = 1500,
-                    NoDelay = true
-                };
-
-                iocpClient.Connect("221.162.129.150", 12345);
-
-                iocpClient.OnConnected += (tick) =>
-                {
-                    Console.WriteLine("[클라] " + tick + " 타임에 서버에 연결되었습니다.");
-                    iocpClient.Send(new byte[1]);
-                    //iocpClient.Send(new byte[1], 0, 1);
-                    //iocpClient.Send(new byte[1], 0, 1);
-                    //iocpClient.Disconnect();
-                };
-                iocpClient.OnDisconnected += (tick) =>
-                {
-                    Console.WriteLine("[클라] " + tick + " 타임에 서버와 연결이 끊어졌습니다.");
-                };
-                iocpClient.OnSendComeplete += (data) =>
-                {
-                    Console.WriteLine("[클라] " + "서버에 " + data.Length + " 바이트를 전송했습니다");
-                };
-                iocpClient.OnReceiveComeplete += (data) =>
-                {
-                    Console.WriteLine("[클라] " + "서버로부터 " + data.Length + " 바이트를 수신했습니다.");
-                };
-
-                while (true)
-                {
-
-                }
-            }).Start();
-            
+            ServerEventListener serverEventListener = new ServerEventListener();
+            NetworkIOCPServer iocpServer = new NetworkIOCPServer();
+            iocpServer.Start();
+            iocpServer.SetEventListener(serverEventListener);
 
             while (true)
             {
-
+                //끝나지마라.
             }
         }
     }

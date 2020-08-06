@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Client", "Client\Client.csp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared", "Shared\Shared.csproj", "{F28E883E-D876-4BF6-A206-350CBDE0F026}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CSharpSimpleIOCP", "CSharpSimpleIOCP\CSharpSimpleIOCP.csproj", "{D5B66165-1376-4769-B7F5-12E0120F84BA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{F28E883E-D876-4BF6-A206-350CBDE0F026}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F28E883E-D876-4BF6-A206-350CBDE0F026}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F28E883E-D876-4BF6-A206-350CBDE0F026}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D5B66165-1376-4769-B7F5-12E0120F84BA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D5B66165-1376-4769-B7F5-12E0120F84BA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D5B66165-1376-4769-B7F5-12E0120F84BA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D5B66165-1376-4769-B7F5-12E0120F84BA}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

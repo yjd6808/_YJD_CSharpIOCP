@@ -19,7 +19,7 @@ namespace CSharpSimpleIOCP.Network.Server
 {
 
 
-    public class NetworkIOCPServer : NetworkOveridableThread, INetworkBase
+    public class NetworkIOCPServer : NetworkOveridableThread
     {
         // 제너럴 변수들
         private TcpListener _Listener;
@@ -28,17 +28,13 @@ namespace CSharpSimpleIOCP.Network.Server
         private ReaderWriterLockSlim _GeneralLocker;
         private INetworkIOCPServerEventListener _EventListener;
 
-        //접속 승인 대기중인 클라이언트
-        private readonly List<NetworkClient> _WaitingClientList;
-        private readonly ReaderWriterLockSlim _WaitingClientLocker;
-
         #region 델리게이트와 이벤트들
         public delegate void OnServerStartedHandler(long tick);
         public delegate void OnServerStoppedHandler(long tick);
         public delegate void OnClientConnectedHandler(NetworkClient client);
         public delegate void OnClientDisconnectedHandler(NetworkClient client);
-        public delegate void OnReceiveCompleteHandler(byte[] bytes, NetworkClient targetClient);
-        public delegate void OnSendCompleteHandler(byte[] bytes, NetworkClient targetClient);
+        public delegate void OnReceiveCompleteHandler(NetworkDataWriter networkDataWriter, NetworkClient targetClient);
+        public delegate void OnSendCompleteHandler(NetworkDataWriter networkDataWriter, NetworkClient targetClient);
 
         private event OnServerStartedHandler _OnServerStarted;
         private event OnServerStoppedHandler _OnServerStopped;
@@ -61,14 +57,7 @@ namespace CSharpSimpleIOCP.Network.Server
             _IsRunning = false;
             _Listener = null;
             _GeneralLocker = new ReaderWriterLockSlim();
-            _WaitingClientLocker = new ReaderWriterLockSlim();
-            _WaitingClientList = new List<NetworkClient>();
             _EventListener = null;
-        }
-
-        public void SetLogger(INetworkLogger logger)
-        {
-            NetworkLogger.SetLogger(logger);
         }
 
         public void SetEventListener(INetworkIOCPServerEventListener eventListener)
@@ -244,12 +233,8 @@ namespace CSharpSimpleIOCP.Network.Server
                 _OnServerStopped?.Invoke(DateTime.Now.Ticks);
                 _EventListener?.OnServerStopped(DateTime.Now.Ticks);
             }
-
-            using (_WaitingClientLocker.Write())
-            {
-                _WaitingClientList.Clear();
-            }
         }
+
 
         protected override void Execute(object param)
         {
@@ -306,12 +291,6 @@ namespace CSharpSimpleIOCP.Network.Server
                 NetworkLogger.WriteLine(NetworkLogLevel.Error, e.StackTrace);
             }
 
-            //대기 큐에 넣어줌
-            using (_WaitingClientLocker.Write())
-            {
-                _WaitingClientList.Add(acceptedClient);
-            }
-
             //다시 수신 대기상태로 둠
             try
             {
@@ -334,6 +313,21 @@ namespace CSharpSimpleIOCP.Network.Server
 
             //접속한 클라를 수신가능한 상태로 둠
             acceptedClient.Start();
+        }
+
+        public void Send(NetworkClient client, NetworkDataWriter networkDataWriter)
+        {
+            Send(client, networkDataWriter.AvailableData);
+        }
+
+        public void Send(NetworkClient client, byte[] data)
+        {
+            Send(client, data, 0, data.Length);
+        }
+
+        public void Send(NetworkClient client, byte[] data, int offset, int dataSize)
+        {
+            client.Send(data, 0, dataSize);
         }
 
         /// <summary>
@@ -361,10 +355,10 @@ namespace CSharpSimpleIOCP.Network.Server
         /// </summary>
         /// <param name="bytes">수신받은 바이트</param>
         /// <param name="targetClient">이 데이터를 보낸 클라이언트</param>
-        internal void OnReceive(byte[] bytes, NetworkClient targetClient)
+        internal void OnReceive(NetworkDataWriter networkDataWriter, NetworkClient targetClient)
         {
-            _OnReceiveComplete?.Invoke(bytes, targetClient);
-            _EventListener?.OnReceiveComplete(bytes, targetClient);
+            _OnReceiveComplete?.Invoke(networkDataWriter, targetClient);
+            _EventListener?.OnReceiveComplete(networkDataWriter, targetClient);
         }
 
         /// <summary>
@@ -374,10 +368,10 @@ namespace CSharpSimpleIOCP.Network.Server
         /// <param name="bytes">수신받은 바이트</param>
         /// <param name="targetClient">이 데이터를 받을 클라이언트</param>
 
-        internal void OnSend(byte[] bytes, NetworkClient targetClient)
+        internal void OnSend(NetworkDataWriter networkDataWriter, NetworkClient targetClient)
         {
-            _OnSendComplete?.Invoke(bytes, targetClient);
-            _EventListener?.OnSendComplete(bytes, targetClient);
+            _OnSendComplete?.Invoke(networkDataWriter, targetClient);
+            _EventListener?.OnSendComplete(networkDataWriter, targetClient);
         }
     }
 }

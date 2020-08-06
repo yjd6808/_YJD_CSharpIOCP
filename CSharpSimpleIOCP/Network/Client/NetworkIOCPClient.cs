@@ -24,11 +24,6 @@ namespace CSharpSimpleIOCP.Network.Client
         private event OnConnectedHandler _OnConnected;
         #endregion
 
-        public NetworkIOCPClient() : base()
-        {
-            _ConnectionTimeout = 1500;
-        }
-
         #region Getter/Setter
         public string UserSerial
         {
@@ -102,11 +97,9 @@ namespace CSharpSimpleIOCP.Network.Client
 
         #endregion
 
-
-
-        public void SetLogger(INetworkLogger logger)
+        public NetworkIOCPClient() : base()
         {
-            NetworkLogger.SetLogger(logger);
+            _ConnectionTimeout = 1500;
         }
 
         public override void Disconnect()
@@ -143,6 +136,7 @@ namespace CSharpSimpleIOCP.Network.Client
 
             try
             {
+                NetworkLogger.WriteLine(NetworkLogLevel.Info, "서버에 접속을 시도합니다.");
                 StartThreadWithParam(new IPEndPoint(IPAddress.Parse(hostname), port));
             }
             catch  (Exception e)
@@ -155,7 +149,6 @@ namespace CSharpSimpleIOCP.Network.Client
         protected override void Execute(object param)
         {
             IPEndPoint targetEndpoint = param as IPEndPoint;
-
             try
             {
                 using (_GeneralLocker.Write())
@@ -165,7 +158,8 @@ namespace CSharpSimpleIOCP.Network.Client
                     _TcpClient.BeginConnect(targetEndpoint.Address, targetEndpoint.Port, new AsyncCallback(OnTcpServerConnected), this)
                         .AsyncWaitHandle.WaitOne(_ConnectionTimeout);
 
-                    
+                    if (!_TcpClient.Connected)
+                        NetworkLogger.WriteLine(NetworkLogLevel.Info, "타임아웃으로 서버접속에 실패하였습니다.서버가 정상적으로 열려있는지 확인부탁드립니다.");
                 }
             }
             catch (Exception e )
@@ -191,7 +185,7 @@ namespace CSharpSimpleIOCP.Network.Client
                     _IsConnectionAlive = true;
                 }
 
-                base.Execute(); //리시브 시작
+                base.Execute();
                 _OnConnected?.Invoke(DateTime.Now.Ticks);
                 ((INetworkIOCPClientEventListener)_EventListener)?.OnConnected(DateTime.Now.Ticks);
                 NetworkLogger.WriteLine(NetworkLogLevel.Info, _Endpoint + " 서버에 접속하였습니다.");

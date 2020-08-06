@@ -13,7 +13,7 @@ namespace CSharpSimpleIOCP.Network.Server
         void OnServerStopped(long tick);
         void OnClientConnected(NetworkClient client);
         void OnClientDisconnected(NetworkClient client);
-        void OnSendComplete(byte[] bytes, NetworkClient targetClient);
-        void OnReceiveComplete(byte[] bytes, NetworkClient targetClient);
+        void OnSendComplete(NetworkDataWriter networkDataWriter, NetworkClient targetClient);
+        void OnReceiveComplete(NetworkDataWriter networkDataWriter, NetworkClient targetClient);
     }
 }

@@ -49,5 +49,11 @@
   <ItemGroup>
     <None Include="App.config" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CSharpSimpleIOCP\CSharpSimpleIOCP.csproj">
+      <Project>{D5B66165-1376-4769-B7F5-12E0120F84BA}</Project>
+      <Name>CSharpSimpleIOCP</Name>
+    </ProjectReference>
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

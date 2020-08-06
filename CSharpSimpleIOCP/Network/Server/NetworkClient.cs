@@ -46,8 +46,8 @@ namespace CSharpSimpleIOCP.Network.Server
         
 
         #region 델리게이트와 이벤트들
-        public delegate void OnReceiveCompleteHandler(byte[] bytes);
-        public delegate void OnSendCompleteHandler(byte[] bytes);
+        public delegate void OnReceiveCompleteHandler(NetworkDataWriter networkDataWriter);
+        public delegate void OnSendCompleteHandler(NetworkDataWriter networkDataWriter);
         public delegate void OnDisconnectedHandler(long tick);
 
         private event OnReceiveCompleteHandler _OnReceiveComeplete;
@@ -271,10 +271,6 @@ namespace CSharpSimpleIOCP.Network.Server
                 NetworkLogger.WriteLine(NetworkLogLevel.Error, e.Message);
                 NetworkLogger.WriteLine(NetworkLogLevel.Error, e.StackTrace);
             }
-
-
-            //서버 연결되었지만 확인안된 리스트에서 제거
-            //서버 연결중인 리스트에서 제거
         }
 
         public void SetEventListener(INetworkClientEventListener eventListener)
@@ -284,6 +280,12 @@ namespace CSharpSimpleIOCP.Network.Server
                 _EventListener = eventListener;
             }
         }
+
+        public void Send(NetworkDataWriter networkDataWriter)
+        {
+            Send(networkDataWriter.AvailableData);
+        }
+
         public void Send(byte[] data)
         {
             Send(data, 0, data.Count());
@@ -433,9 +435,12 @@ namespace CSharpSimpleIOCP.Network.Server
         //실제 내용 수신이 모두 완료됫을 경우
         private void SendingContentComplete(int sendBytesSize, NetworkTrafficPacket sendTrafficPacket)
         {
-            _EventListener?.OnSendComplete(sendTrafficPacket.TransferingData);
-            _IOCPServer?.OnSend(sendTrafficPacket.TransferingData, this);
-            _OnSendComeplete?.Invoke(sendTrafficPacket.TransferingData);
+            //어차피 이 데이터는 더이상 다른곳에서 안쓰이므로 복사안하고 레퍼런스만 받아서 넣어줘도 멀티쓰레딩으로 영향 받을일 없을듯
+            NetworkDataWriter sendDataWriter =  NetworkDataWriter.FromBytes(sendTrafficPacket.TransferingData, false); 
+
+            _EventListener?.OnSendComplete(sendDataWriter);
+            _IOCPServer?.OnSend(sendDataWriter, this);
+            _OnSendComeplete?.Invoke(sendDataWriter);
 
             //송신 대기중인 패킷이 있을 경우 처리진행
             if (_SendWaitQueue.IsEmpty)
@@ -609,15 +614,16 @@ namespace CSharpSimpleIOCP.Network.Server
         {
             try
             {
+                NetworkDataWriter receiveDataWriter = NetworkDataWriter.FromBytes(traffic.ContentPacket.TransferingData, false);
                 NetworkTraffic receiveTraffic = NetworkTraffic.CreateReceiveTraffic(NetworkPacketHeader.HeaderSize, this);
                 _TcpClient.Client.BeginReceive(
                     receiveTraffic.HeaderPacket.TransferingData,
                     receiveTraffic.HeaderPacket.Offset,
                     receiveTraffic.HeaderPacket.Size, SocketFlags.None, new AsyncCallback(OnReceive), receiveTraffic);
 
-                _IOCPServer?.OnReceive(traffic.ContentPacket.TransferingData, this);
-                _EventListener?.OnReceiveComplete(traffic.ContentPacket.TransferingData);
-                _OnReceiveComeplete?.Invoke(traffic.ContentPacket.TransferingData);
+                _IOCPServer?.OnReceive(receiveDataWriter, this);
+                _EventListener?.OnReceiveComplete(receiveDataWriter);
+                _OnReceiveComeplete?.Invoke(receiveDataWriter);
             }
             catch (Exception e)
             {
